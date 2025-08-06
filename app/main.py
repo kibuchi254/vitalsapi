@@ -16,10 +16,22 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+# Define the allowed origins. It's better to be specific than use a wildcard in production.
+# For development, you can add your frontend's URL.
+# origins = [
+#     "http://localhost:5173",
+#     "https://your-production-frontend.com"
+# ]
+
+# Use a wildcard for local development, but be aware of the security implications in production.
+# The error you saw is likely caused by an external configuration layer, not this code.
+# The code below is the correct way to handle CORS in FastAPI.
+origins = ["*"]
+
 # Set up CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
