@@ -47,14 +47,14 @@ class CRUDUser:
         user = self.get_by_email(db, email=email)
         if not user:
             return None
-        if not verify_password(password, user.hashed_password.scalar()):
+        if not verify_password(password, user.hashed_password):
             return None
         return user
 
     def is_active(self, user: User) -> bool:
-        return user.is_active.scalar()
+        return bool(user.is_active)
 
     def is_superuser(self, user: User) -> bool:
-        return user.is_superuser.scalar()
+        return bool(user.is_superuser)
 
 user = CRUDUser()
