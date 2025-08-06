@@ -3,7 +3,7 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL="postgresql://lijohtech:Elijah%4010519@localhost:5432/birth_records_db"
+    DATABASE_URL: str = "postgresql://lijohtech:Elijah%4010519@localhost:5432/birth_records_db"
     
     # JWT
     SECRET_KEY: str = "your-super-secret-key-change-this-in-production"
