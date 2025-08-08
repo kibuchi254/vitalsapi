@@ -314,24 +314,10 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                 if field in ['mother_name', 'ip_number', 'birth_notification_no'] and len(clean_record[field]) < 2:
                     logger.error(f"Invalid {field} value: {clean_record[field]}")
                     return None
-        
-        if 'mode_of_delivery' in clean_record and clean_record['mode_of_delivery']:
-            mode = clean_record['mode_of_delivery'].lower()
-            if 'caeserian' in mode or 'c-section' in mode:
-                clean_record['mode_of_delivery'] = 'C-Section'
-            elif 'spontaneous' in mode or 'normal' in mode:
-                clean_record['mode_of_delivery'] = 'Normal'
-            elif 'breech' in mode:
-                clean_record['mode_of_delivery'] = 'Breech'
-            elif 'vacuum' in mode:
-                clean_record['mode_of_delivery'] = 'Vacuum'
-            elif 'forceps' in mode:
-                clean_record['mode_of_delivery'] = 'Forceps'
-            elif 'born before arrival' in mode:
-                clean_record['mode_of_delivery'] = 'Born Before Arrival'
-            else:
-                logger.error(f"Invalid mode_of_delivery value: {clean_record['mode_of_delivery']}")
-                clean_record['mode_of_delivery'] = None
+                # For mode_of_delivery, ensure it's a non-empty string
+                if field == 'mode_of_delivery' and len(clean_record[field]) < 1:
+                    logger.error(f"Invalid mode_of_delivery value: {clean_record[field]}")
+                    clean_record[field] = None
         
         return clean_record
         
