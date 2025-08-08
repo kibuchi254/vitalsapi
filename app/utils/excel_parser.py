@@ -5,7 +5,7 @@ import io
 import logging
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def parse_excel_file(file_content: bytes) -> List[Dict[str, Any]]:
@@ -287,11 +287,9 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
             if field in clean_record and clean_record[field] is not None:
                 try:
                     if isinstance(clean_record[field], str):
-                        # Handle DD-MMM format (e.g., '12-Jul')
                         try:
                             clean_record[field] = pd.to_datetime(clean_record[field], format='%d-%b', errors='raise').date()
                         except:
-                            # Fallback to general parsing
                             clean_record[field] = pd.to_datetime(clean_record[field], dayfirst=True).date()
                     elif isinstance(clean_record[field], (pd.Timestamp, datetime)):
                         clean_record[field] = clean_record[field].date()
@@ -304,8 +302,8 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
             if field in clean_record and clean_record[field] is not None:
                 clean_record[field] = str(clean_record[field]).strip().title()
                 if field == 'father_name' and (clean_record[field].lower().startswith('unnamed') or len(clean_record[field]) < 2):
-                    clean_record[field] = None
-                    logger.debug(f"Set father_name to None for invalid value: {clean_record[field]}")
+                    clean_record[field] = 'Unknown'
+                    logger.debug(f"Set father_name to 'Unknown' for invalid value: {clean_record[field]}")
         
         if 'mode_of_delivery' in clean_record and clean_record['mode_of_delivery']:
             mode = clean_record['mode_of_delivery'].lower()
