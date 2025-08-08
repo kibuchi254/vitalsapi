@@ -21,7 +21,7 @@ def parse_excel_file(file_content: bytes) -> List[Dict[str, Any]]:
         # Define expected column order and mapping
         EXPECTED_COLUMNS = [
             'record_date',
-            'ip_number', 
+            'ip_number',
             'mother_name',
             'admission_date',
             'discharge_date',
@@ -133,12 +133,48 @@ def has_meaningful_headers(columns) -> bool:
 def detect_and_parse_data(df_raw: pd.DataFrame) -> tuple[Optional[pd.DataFrame], str]:
     """Detect where the actual data starts and parse accordingly"""
     
-    # Method A: Look for a row that could be headers
+    # Method A: Check if first row contains actual data (not headers)
+    first_row = df_raw.iloc[0] if len(df_raw) > 0 else None
+    if first_row is not None:
+        # Count dates, numbers, and specific patterns that indicate data
+        date_count = sum(1 for val in first_row if isinstance(val, (pd.Timestamp, datetime)))
+        number_count = sum(1 for val in first_row if isinstance(val, (int, float)) and not pd.isna(val))
+        
+        # If we see multiple dates and numbers, this is likely data, not headers
+        if date_count >= 2 and number_count >= 1:
+            logger.info("First row appears to contain actual data, not headers")
+            
+            # Assign standard column names and treat all rows as data
+            EXPECTED_COLUMNS = [
+                'record_date', 'ip_number', 'mother_name', 'admission_date',
+                'discharge_date', 'date_of_birth', 'gender', 'mode_of_delivery',
+                'child_name', 'father_name', 'birth_notification_no'
+            ]
+            
+            df_with_headers = df_raw.copy()
+            # Assign expected headers up to the number of columns we have
+            new_columns = EXPECTED_COLUMNS[:len(df_with_headers.columns)]
+            
+            # Fill remaining columns with generic names if we have more columns than expected
+            for i in range(len(new_columns), len(df_with_headers.columns)):
+                new_columns.append(f'extra_column_{i}')
+                
+            df_with_headers.columns = new_columns
+            df_with_headers = df_with_headers.reset_index(drop=True)
+            
+            logger.info(f"Treating all rows as data with assigned headers: {new_columns}")
+            return df_with_headers, "data_as_first_row"
+    
+    # Method B: Look for a row that could be headers
     for row_idx in range(min(5, len(df_raw))):
         row_values = df_raw.iloc[row_idx].values
         text_count = sum(1 for val in row_values if isinstance(val, str) and len(str(val).strip()) > 2)
         
-        if text_count >= 4:  # At least 4 text values that could be headers
+        # Check if this looks like headers (mostly text, not too many dates/numbers)
+        date_count = sum(1 for val in row_values if isinstance(val, (pd.Timestamp, datetime)))
+        number_count = sum(1 for val in row_values if isinstance(val, (int, float)) and not pd.isna(val))
+        
+        if text_count >= 4 and date_count <= 1 and number_count <= 2:
             # Try using this row as headers
             df_with_headers = df_raw.iloc[row_idx+1:].copy()
             df_with_headers.columns = df_raw.iloc[row_idx].values
@@ -148,7 +184,7 @@ def detect_and_parse_data(df_raw: pd.DataFrame) -> tuple[Optional[pd.DataFrame],
                 logger.info(f"Found potential headers at row {row_idx}: {list(df_raw.iloc[row_idx].values)}")
                 return df_with_headers, f"detected_headers_row_{row_idx}"
     
-    # Method B: Assume standard column order and assign headers
+    # Method C: Assume standard column order and assign headers
     if len(df_raw.columns) >= 8:  # Minimum expected columns
         EXPECTED_COLUMNS = [
             'record_date', 'ip_number', 'mother_name', 'admission_date',
@@ -247,48 +283,76 @@ def clean_and_standardize_dataframe(df: pd.DataFrame, parsing_method: str) -> Op
     # Apply column mapping
     df = df.rename(columns=COLUMN_MAPPING)
     
-    # If we still don't have the required columns and used assumed headers, 
-    # try to map by position for common Excel layouts
-    required_fields = ['record_date', 'ip_number', 'date_of_birth', 'child_name', 'birth_notification_no']
+    # If we still don't have the required columns or headers are not meaningful, try positional mapping
+    required_fields = ['record_date', 'ip_number', 'mother_name', 'date_of_birth', 'child_name', 'birth_notification_no']
     missing_required = [field for field in required_fields if field not in df.columns]
     
-    if missing_required and 'assumed_headers' in parsing_method:
-        logger.info(f"Missing required fields after mapping: {missing_required}")
-        logger.info("Attempting position-based mapping for common Excel layouts...")
+    # Check if headers are not meaningful (e.g., datetime or numeric values)
+    non_meaningful_headers = any(isinstance(col, (pd.Timestamp, datetime)) or str(col).startswith('Unnamed') 
+                                for col in df.columns)
+    
+    if missing_required or non_meaningful_headers:
+        logger.info(f"Missing required fields: {missing_required} or non-meaningful headers detected")
+        logger.info("Attempting position-based mapping based on expected column order...")
         
-        # Try common layouts based on the data you showed in logs
+        # Expected order from logs: [record_date, ip_number, mother_name, admission_date, discharge_date, 
+        # date_of_birth, gender, mode_of_delivery, child_name, father_name, birth_notification_no]
         if len(df.columns) >= 11:
-            # Based on your log: [nan, nan, 'patricia_kalekye_mwaniki', nan, nan, nan, 'female', 'caeserian_section', 'talia_mwikali', 'unnamed:_9', nan]
-            # This looks like: [?, ?, mother_name, ?, ?, date_of_birth?, gender, mode_of_delivery, child_name, father_name?, ?]
-            position_mapping = {}
+            # Assign columns based on position
+            position_mapping = {
+                df.columns[0]: 'record_date',
+                df.columns[1]: 'ip_number',
+                df.columns[2]: 'mother_name',
+                df.columns[3]: 'admission_date',
+                df.columns[4]: 'discharge_date',
+                df.columns[5]: 'date_of_birth',
+                df.columns[6]: 'gender',
+                df.columns[7]: 'mode_of_delivery',
+                df.columns[8]: 'child_name',
+                df.columns[9]: 'father_name',
+                df.columns[10]: 'birth_notification_no'
+            }
             
-            # Find columns with meaningful data to help identify structure
-            for idx, col in enumerate(df.columns):
-                sample_values = df.iloc[:3, idx].dropna().astype(str).str.lower()
-                
-                # Look for gender indicators
-                if any(val in ['male', 'female', 'm', 'f'] for val in sample_values):
-                    position_mapping[col] = 'gender'
-                    
-                # Look for delivery mode indicators
-                elif any(word in val for val in sample_values for word in ['caeser', 'normal', 'section', 'delivery']):
-                    position_mapping[col] = 'mode_of_delivery'
-                    
-            # Apply position mapping
+            # Apply position-based mapping
             df = df.rename(columns=position_mapping)
             
-            # For remaining unmapped required fields, try to infer from position and content
-            if 'child_name' not in df.columns:
-                # Look for columns with name-like content
-                for col in df.columns:
-                    if col not in ['gender', 'mode_of_delivery']:
-                        sample_vals = df[col].dropna().head(3).astype(str)
-                        # Simple heuristic: names are usually 2+ words or have specific patterns
-                        if len(sample_vals) > 0:
-                            avg_words = sample_vals.str.split().str.len().mean()
-                            if avg_words >= 1.5:  # Likely names
-                                df = df.rename(columns={col: 'child_name'})
-                                break
+            # Log the new column names
+            logger.info(f"Applied position-based mapping: {list(df.columns)}")
+            
+            # Verify required fields after positional mapping
+            missing_required = [field for field in required_fields if field not in df.columns]
+            if missing_required:
+                logger.warning(f"Still missing required fields after positional mapping: {missing_required}")
+                return None
+    
+    # Additional content-based mapping for robustness
+    for idx, col in enumerate(df.columns):
+        if col not in EXPECTED_COLUMNS:
+            sample_values = df.iloc[:3, idx].dropna().astype(str).str.lower()
+            
+            # Identify gender
+            if any(val in ['male', 'female', 'm', 'f', 'other'] for val in sample_values):
+                df = df.rename(columns={col: 'gender'})
+                
+            # Identify mode of delivery
+            elif any(word in val for val in sample_values for word in ['caeser', 'normal', 'section', 'delivery', 'vacuum', 'forceps', 'breech']):
+                df = df.rename(columns={col: 'mode_of_delivery'})
+                
+            # Identify name-like fields (mother_name, child_name, father_name)
+            elif any(len(str(val).split()) >= 2 for val in sample_values):
+                if col != 'mother_name' and col != 'child_name' and col != 'father_name':
+                    # If mother_name and child_name are already mapped, assume this is father_name
+                    if 'mother_name' in df.columns and 'child_name' in df.columns and 'father_name' not in df.columns:
+                        df = df.rename(columns={col: 'father_name'})
+                    elif 'mother_name' not in df.columns:
+                        df = df.rename(columns={col: 'mother_name'})
+                    elif 'child_name' not in df.columns:
+                        df = df.rename(columns={col: 'child_name'})
+                
+            # Identify birth notification number (numeric or long string)
+            elif any(len(str(val)) >= 4 and str(val).isdigit() for val in sample_values):
+                if 'birth_notification_no' not in df.columns:
+                    df = df.rename(columns={col: 'birth_notification_no'})
     
     # Remove rows that are completely empty or have only NaN values
     df = df.dropna(how='all')
@@ -319,7 +383,7 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                 try:
                     if isinstance(clean_record[field], str):
                         clean_record[field] = pd.to_datetime(clean_record[field], dayfirst=True).date()
-                    elif hasattr(clean_record[field], 'date'):
+                    elif isinstance(clean_record[field], (pd.Timestamp, datetime)):
                         clean_record[field] = clean_record[field].date()
                 except:
                     clean_record[field] = None
@@ -344,6 +408,8 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                 clean_record['gender'] = 'Male'
             elif gender in ['F', 'FEMALE']:
                 clean_record['gender'] = 'Female'
+            elif gender == 'OTHER':
+                clean_record['gender'] = 'Other'
         
         return clean_record
         
@@ -354,11 +420,49 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
 
 def is_record_complete(record: Dict[str, Any]) -> bool:
     """Check if record has minimum required fields"""
-    required_fields = ['child_name', 'birth_notification_no']
+    required_fields = ['child_name', 'birth_notification_no', 'mother_name']
     
     for field in required_fields:
         value = record.get(field)
         if not value or (isinstance(value, str) and value.strip() == ''):
+            logger.debug(f"Record missing required field '{field}': {record}")
             return False
     
+    # Additional validation - make sure birth_notification_no is valid
+    birth_no = record.get('birth_notification_no')
+    if birth_no:
+        try:
+            birth_no_str = str(birth_no).strip()
+            if len(birth_no_str) < 4:
+                logger.debug(f"Birth notification number too short: {birth_no_str}")
+                return False
+        except:
+            logger.debug(f"Invalid birth notification number: {birth_no}")
+            return False
+    
+    # Validate mother_name
+    mother_name = record.get('mother_name')
+    if mother_name:
+        try:
+            mother_name_str = str(mother_name).strip()
+            if len(mother_name_str) < 2:
+                logger.debug(f"Mother name too short: {mother_name_str}")
+                return False
+        except:
+            logger.debug(f"Invalid mother name: {mother_name}")
+            return False
+    
+    # Validate child_name
+    child_name = record.get('child_name')
+    if child_name:
+        try:
+            child_name_str = str(child_name).strip()
+            if len(child_name_str) < 2:
+                logger.debug(f"Child name too short: {child_name_str}")
+                return False
+        except:
+            logger.debug(f"Invalid child name: {child_name}")
+            return False
+    
+    logger.debug(f"Record is complete: child_name={record.get('child_name')}, mother_name={record.get('mother_name')}, birth_notification_no={record.get('birth_notification_no')}")
     return True

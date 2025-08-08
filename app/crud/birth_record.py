@@ -39,6 +39,7 @@ class CRUDBirthRecord:
             or_(
                 BirthRecord.child_name.ilike(f"%{query}%"),
                 BirthRecord.father_name.ilike(f"%{query}%"),
+                BirthRecord.mother_name.ilike(f"%{query}%"),
                 BirthRecord.birth_notification_no.ilike(f"%{query}%"),
                 BirthRecord.ip_number.ilike(f"%{query}%")
             )

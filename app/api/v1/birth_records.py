@@ -117,7 +117,7 @@ def search_birth_records(
     limit: int = 100,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
-    """Search birth records by child name, father name, or notification number"""
+    """Search birth records by child name, mother name, father name, or notification number"""
     records = birth_record_crud.search(db=db, query=q, skip=skip, limit=limit)
     return records
 
@@ -204,7 +204,7 @@ async def upload_excel_file(
                 logger.debug(f"Processing row {row_number}: {record_data}")
                 
                 # Check for required fields
-                required_fields = ['record_date', 'ip_number', 'date_of_birth', 'child_name', 'birth_notification_no']
+                required_fields = ['record_date', 'ip_number', 'mother_name', 'date_of_birth', 'child_name', 'birth_notification_no']
                 missing_fields = [field for field in required_fields if not record_data.get(field)]
                 
                 if missing_fields:
@@ -257,7 +257,8 @@ async def upload_excel_file(
                         "row": row_number,
                         "id": str(record.id),
                         "birth_notification_no": record.birth_notification_no,
-                        "child_name": record.child_name
+                        "child_name": record.child_name,
+                        "mother_name": record.mother_name
                     })
                     logger.info(f"Successfully created record for row {row_number} with ID: {record.id}")
                     
