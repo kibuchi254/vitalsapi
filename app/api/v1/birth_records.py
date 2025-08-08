@@ -196,8 +196,13 @@ async def upload_excel_file(
         # Track processed notification numbers to detect duplicates within the file
         processed_notification_nos = set()
         
+        # Check for existing notification numbers in bulk
+        notification_nos = [record.get('birth_notification_no') for record in records_data 
+                           if record.get('birth_notification_no')]
+        existing_records = birth_record_crud.get_by_notification_nos(db, notification_nos=notification_nos)
+        
         for i, record_data in enumerate(records_data):
-            row_number = i + 1
+            row_number = i + 2  # Adjust for header row and 1-based indexing
             
             try:
                 # Log processing for debugging
@@ -209,6 +214,7 @@ async def upload_excel_file(
                 
                 if missing_fields:
                     validation_errors.append(f"Row {row_number}: Missing required fields: {', '.join(missing_fields)}")
+                    logger.debug(f"Row {row_number} failed: Missing fields {missing_fields}")
                     continue
                 
                 notification_no = record_data['birth_notification_no']
@@ -216,27 +222,28 @@ async def upload_excel_file(
                 # Check for duplicates within the current file
                 if notification_no in processed_notification_nos:
                     duplicate_errors.append(f"Row {row_number}: Duplicate birth notification number within file: {notification_no}")
+                    logger.debug(f"Row {row_number} failed: Duplicate notification number {notification_no}")
                     continue
                 
                 processed_notification_nos.add(notification_no)
                 
                 # Check if birth notification number already exists in database
-                existing_record = birth_record_crud.get_by_notification_no(
-                    db, notification_no=notification_no
-                )
-                if existing_record:
+                if notification_no in existing_records:
                     duplicate_errors.append(f"Row {row_number}: Birth notification number already exists in database: {notification_no}")
+                    logger.debug(f"Row {row_number} failed: Notification number {notification_no} exists in database")
                     continue
                 
                 # Validate data types and create Pydantic model
                 try:
                     record_create = BirthRecordCreate(**record_data)
-                    logger.debug(f"Created valid schema object for row {row_number}")
+                    logger.debug(f"Created valid schema object for row {row_number}: {record_create.dict()}")
                 except ValidationError as ve:
                     validation_errors.append(f"Row {row_number}: Validation error - {str(ve)}")
+                    logger.debug(f"Row {row_number} failed: Validation error - {str(ve)}")
                     continue
                 except Exception as ve:
                     validation_errors.append(f"Row {row_number}: Data validation failed - {str(ve)}")
+                    logger.debug(f"Row {row_number} failed: Data validation error - {str(ve)}")
                     continue
                 
                 # If dry run, just validate without saving
@@ -246,6 +253,7 @@ async def upload_excel_file(
                         "data": record_create.dict(),
                         "status": "valid"
                     })
+                    logger.debug(f"Row {row_number} validated successfully for dry run")
                     continue
                 
                 # Create the record in database
@@ -262,24 +270,18 @@ async def upload_excel_file(
                     })
                     logger.info(f"Successfully created record for row {row_number} with ID: {record.id}")
                     
-                except IntegrityError as ie:
-                    db.rollback()
-                    database_errors.append(f"Row {row_number}: Database integrity error - {str(ie)}")
-                    logger.error(f"Integrity error for row {row_number}: {str(ie)}")
-                    
-                except SQLAlchemyError as se:
-                    db.rollback()
-                    database_errors.append(f"Row {row_number}: Database error - {str(se)}")
-                    logger.error(f"SQLAlchemy error for row {row_number}: {str(se)}")
+                except ValueError as ve:
+                    database_errors.append(f"Row {row_number}: Database error - {str(ve)}")
+                    logger.error(f"Row {row_number} failed: Database error - {str(ve)}")
                     
                 except Exception as de:
                     db.rollback()
                     database_errors.append(f"Row {row_number}: Unexpected database error - {str(de)}")
-                    logger.error(f"Unexpected database error for row {row_number}: {str(de)}")
+                    logger.error(f"Row {row_number} failed: Unexpected database error - {str(de)}")
                     
             except Exception as e:
                 errors.append(f"Row {row_number}: Processing error - {str(e)}")
-                logger.error(f"Error processing row {row_number}: {str(e)}")
+                logger.error(f"Row {row_number} failed: Processing error - {str(e)}")
                 logger.error(traceback.format_exc())
         
         # Compile all errors
