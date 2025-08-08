@@ -13,7 +13,7 @@ class BirthRecordBase(BaseModel):
     gender: str
     mode_of_delivery: str
     child_name: str
-    father_name: str
+    father_name: Optional[str] = None
     birth_notification_no: str
 
     @validator('gender')
@@ -24,7 +24,7 @@ class BirthRecordBase(BaseModel):
 
     @validator('mode_of_delivery')
     def validate_delivery_mode(cls, v):
-        valid_modes = ['normal', 'c-section', 'vacuum', 'forceps', 'breech']
+        valid_modes = ['normal', 'c-section', 'vacuum', 'forceps', 'breech', 'born before arrival']
         if v.lower() not in valid_modes:
             raise ValueError(f'Mode of delivery must be one of: {", ".join(valid_modes)}')
         return v.title()
@@ -33,6 +33,12 @@ class BirthRecordBase(BaseModel):
     def validate_mother_name(cls, v):
         if not v or len(v.strip()) < 2:
             raise ValueError('Mother name must be at least 2 characters long')
+        return v.title()
+
+    @validator('child_name')
+    def validate_child_name(cls, v):
+        if not v or len(v.strip()) < 2:
+            raise ValueError('Child name must be at least 2 characters long')
         return v.title()
 
 class BirthRecordCreate(BirthRecordBase):
@@ -59,7 +65,7 @@ class BirthRecordUpdate(BaseModel):
 
     @validator('mode_of_delivery', always=True)
     def validate_delivery_mode_update(cls, v):
-        valid_modes = ['normal', 'c-section', 'vacuum', 'forceps', 'breech']
+        valid_modes = ['normal', 'c-section', 'vacuum', 'forceps', 'breech', 'born before arrival']
         if v is not None and v.lower() not in valid_modes:
             raise ValueError(f'Mode of delivery must be one of: {", ".join(valid_modes)}')
         return v.title() if v else None
@@ -68,6 +74,12 @@ class BirthRecordUpdate(BaseModel):
     def validate_mother_name_update(cls, v):
         if v is not None and len(v.strip()) < 2:
             raise ValueError('Mother name must be at least 2 characters long')
+        return v.title() if v else None
+
+    @validator('child_name', always=True)
+    def validate_child_name_update(cls, v):
+        if v is not None and len(v.strip()) < 2:
+            raise ValueError('Child name must be at least 2 characters long')
         return v.title() if v else None
 
 class BirthRecord(BirthRecordBase):

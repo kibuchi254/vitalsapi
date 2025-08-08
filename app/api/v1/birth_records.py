@@ -38,7 +38,6 @@ def create_birth_record(
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     """Create new birth record"""
-    # Check if birth notification number already exists
     existing_record = birth_record_crud.get_by_notification_no(
         db, notification_no=record_in.birth_notification_no
     )
@@ -79,7 +78,6 @@ def update_birth_record(
     if not record:
         raise HTTPException(status_code=404, detail="Birth record not found")
     
-    # Check if trying to update birth notification number to existing one
     if record_in.birth_notification_no:
         existing_record = birth_record_crud.get_by_notification_no(
             db, notification_no=record_in.birth_notification_no
@@ -147,19 +145,13 @@ async def upload_excel_file(
 ) -> Any:
     """
     Upload and parse Excel file with birth records
-    
-    Parameters:
-    - file: Excel file (.xlsx or .xls)
-    - dry_run: If True, validates data but doesn't save to database
     """
-    # Validate file type
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(
             status_code=400,
             detail="File must be an Excel file (.xlsx or .xls)"
         )
     
-    # Validate file size (10MB limit)
     if file.size and file.size > 10 * 1024 * 1024:
         raise HTTPException(
             status_code=400,
@@ -169,11 +161,9 @@ async def upload_excel_file(
     logger.info(f"Processing Excel file: {file.filename} (User: {current_user.id})")
     
     try:
-        # Read file content
         content = await file.read()
         logger.info(f"File content read successfully. Size: {len(content)} bytes")
         
-        # Parse the Excel file
         records_data = parse_excel_file(content)
         logger.info(f"Successfully parsed {len(records_data)} records from Excel")
         
@@ -183,7 +173,6 @@ async def upload_excel_file(
                 detail="No valid records found in the Excel file"
             )
         
-        # Log first record structure for debugging
         if records_data:
             logger.debug(f"Sample record structure: {records_data[0]}")
             
@@ -193,22 +182,17 @@ async def upload_excel_file(
         duplicate_errors = []
         database_errors = []
         
-        # Track processed notification numbers to detect duplicates within the file
         processed_notification_nos = set()
-        
-        # Check for existing notification numbers in bulk
         notification_nos = [record.get('birth_notification_no') for record in records_data 
                            if record.get('birth_notification_no')]
         existing_records = birth_record_crud.get_by_notification_nos(db, notification_nos=notification_nos)
         
         for i, record_data in enumerate(records_data):
-            row_number = i + 2  # Adjust for header row and 1-based indexing
+            row_number = i + 2
             
             try:
-                # Log processing for debugging
                 logger.debug(f"Processing row {row_number}: {record_data}")
                 
-                # Check for required fields
                 required_fields = ['record_date', 'ip_number', 'mother_name', 'date_of_birth', 'child_name', 'birth_notification_no']
                 missing_fields = [field for field in required_fields if not record_data.get(field)]
                 
@@ -219,7 +203,6 @@ async def upload_excel_file(
                 
                 notification_no = record_data['birth_notification_no']
                 
-                # Check for duplicates within the current file
                 if notification_no in processed_notification_nos:
                     duplicate_errors.append(f"Row {row_number}: Duplicate birth notification number within file: {notification_no}")
                     logger.debug(f"Row {row_number} failed: Duplicate notification number {notification_no}")
@@ -227,13 +210,11 @@ async def upload_excel_file(
                 
                 processed_notification_nos.add(notification_no)
                 
-                # Check if birth notification number already exists in database
                 if notification_no in existing_records:
                     duplicate_errors.append(f"Row {row_number}: Birth notification number already exists in database: {notification_no}")
                     logger.debug(f"Row {row_number} failed: Notification number {notification_no} exists in database")
                     continue
                 
-                # Validate data types and create Pydantic model
                 try:
                     record_create = BirthRecordCreate(**record_data)
                     logger.debug(f"Created valid schema object for row {row_number}: {record_create.dict()}")
@@ -246,7 +227,6 @@ async def upload_excel_file(
                     logger.debug(f"Row {row_number} failed: Data validation error - {str(ve)}")
                     continue
                 
-                # If dry run, just validate without saving
                 if dry_run:
                     created_records.append({
                         "row": row_number,
@@ -256,7 +236,6 @@ async def upload_excel_file(
                     logger.debug(f"Row {row_number} validated successfully for dry run")
                     continue
                 
-                # Create the record in database
                 try:
                     record = birth_record_crud.create(
                         db=db, obj_in=record_create, created_by=current_user.id
@@ -284,10 +263,8 @@ async def upload_excel_file(
                 logger.error(f"Row {row_number} failed: Processing error - {str(e)}")
                 logger.error(traceback.format_exc())
         
-        # Compile all errors
         all_errors = validation_errors + duplicate_errors + database_errors + errors
         
-        # Prepare response
         total_processed = len(records_data)
         success_count = len(created_records)
         error_count = len(all_errors)
@@ -298,7 +275,7 @@ async def upload_excel_file(
             "total_records": total_processed,
             "success_count": success_count,
             "error_count": error_count,
-            "created_records": created_records if dry_run or success_count <= 10 else created_records[:10],  # Limit response size
+            "created_records": created_records if dry_run or success_count <= 10 else created_records[:10],
             "errors": {
                 "validation_errors": validation_errors,
                 "duplicate_errors": duplicate_errors,
@@ -312,7 +289,6 @@ async def upload_excel_file(
         else:
             response_data["message"] = f"Successfully created {success_count} records, {error_count} errors encountered"
         
-        # Log summary
         logger.info(f"Upload summary - Total: {total_processed}, Success: {success_count}, Errors: {error_count}")
         
         return response_data
@@ -349,7 +325,7 @@ async def validate_excel_file(
     Validate Excel file without saving to database (dry run)
     """
     return await upload_excel_file(
-        db=None,  # Will be handled by dependency injection
+        db=None,
         file=file,
         current_user=current_user,
         dry_run=True
