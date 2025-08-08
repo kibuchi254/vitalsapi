@@ -14,7 +14,7 @@ class BirthRecordBase(BaseModel):
     mode_of_delivery: Optional[str] = None
     child_name: Optional[str] = None
     father_name: Optional[str] = None
-    birth_notification_no: str
+    birth_notification_no: Optional[str] = None
 
 class BirthRecordCreate(BirthRecordBase):
     pass
