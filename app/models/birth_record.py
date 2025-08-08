@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Date, Integer, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
-from app.database import Base
+from app.core.database import Base
 import uuid
 
 class BirthRecord(Base):
