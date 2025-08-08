@@ -81,9 +81,9 @@ def parse_excel_file(file_content: bytes) -> List[Dict[str, Any]]:
                             if is_record_complete(validated_record):
                                 sheet_records.append(validated_record)
                             else:
-                                logger.debug(f"Skipping incomplete record at row {idx + 2}: {validated_record}")
+                                logger.error(f"Skipping incomplete record at row {idx + 2}: {validated_record}")
                         else:
-                            logger.debug(f"Skipping invalid record at row {idx + 2}: {record}")
+                            logger.error(f"Skipping invalid record at row {idx + 2}: {record}")
                     except Exception as e:
                         logger.error(f"Error processing row {idx + 2}: {e}")
                         continue
@@ -218,7 +218,7 @@ def clean_and_standardize_dataframe(df: pd.DataFrame, parsing_method: str) -> Op
     
     df = df.rename(columns=COLUMN_MAPPING)
     
-    required_fields = ['record_date', 'ip_number', 'mother_name', 'date_of_birth', 'child_name', 'birth_notification_no']
+    required_fields = ['ip_number', 'mother_name', 'birth_notification_no']
     missing_required = [field for field in required_fields if field not in df.columns]
     non_meaningful_headers = any(isinstance(col, (pd.Timestamp, datetime)) or str(col).startswith('Unnamed') 
                                 or str(col).isdigit() for col in df.columns)
@@ -288,22 +288,32 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                 try:
                     if isinstance(clean_record[field], str):
                         try:
-                            clean_record[field] = pd.to_datetime(clean_record[field], format='%d-%b', errors='raise').date()
+                            # Handle DD-MMM format (e.g., '12-Jul') with default year 2025
+                            clean_record[field] = pd.to_datetime(clean_record[field], format='%d-%b', errors='raise', yearfirst=False).replace(year=2025).date()
                         except:
-                            clean_record[field] = pd.to_datetime(clean_record[field], dayfirst=True).date()
+                            # Fallback to general parsing with default year
+                            parsed_date = pd.to_datetime(clean_record[field], dayfirst=True, errors='coerce')
+                            if pd.isna(parsed_date):
+                                logger.error(f"Invalid date for field {field} in record: {clean_record[field]}")
+                                clean_record[field] = None
+                            else:
+                                clean_record[field] = parsed_date.date()
                     elif isinstance(clean_record[field], (pd.Timestamp, datetime)):
                         clean_record[field] = clean_record[field].date()
                 except Exception as e:
-                    logger.debug(f"Failed to parse date for field {field}: {clean_record[field]}, error: {e}")
+                    logger.error(f"Failed to parse date for field {field}: {clean_record[field]}, error: {e}")
                     clean_record[field] = None
         
-        text_fields = ['gender', 'mode_of_delivery', 'child_name', 'father_name', 'mother_name']
+        text_fields = ['gender', 'mode_of_delivery', 'child_name', 'father_name', 'mother_name', 'ip_number', 'birth_notification_no']
         for field in text_fields:
             if field in clean_record and clean_record[field] is not None:
                 clean_record[field] = str(clean_record[field]).strip().title()
                 if field == 'father_name' and (clean_record[field].lower().startswith('unnamed') or len(clean_record[field]) < 2):
-                    clean_record[field] = 'Unknown'
-                    logger.debug(f"Set father_name to 'Unknown' for invalid value: {clean_record[field]}")
+                    clean_record[field] = None
+                    logger.debug(f"Set father_name to None for invalid value: {clean_record[field]}")
+                if field in ['mother_name', 'ip_number', 'birth_notification_no'] and len(clean_record[field]) < 2:
+                    logger.error(f"Invalid {field} value: {clean_record[field]}")
+                    return None
         
         if 'mode_of_delivery' in clean_record and clean_record['mode_of_delivery']:
             mode = clean_record['mode_of_delivery'].lower()
@@ -319,24 +329,9 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                 clean_record['mode_of_delivery'] = 'Forceps'
             elif 'born before arrival' in mode:
                 clean_record['mode_of_delivery'] = 'Born Before Arrival'
-        
-        if 'ip_number' in clean_record and clean_record['ip_number'] is not None:
-            clean_record['ip_number'] = str(clean_record['ip_number']).strip()
-            
-        if 'birth_notification_no' in clean_record and clean_record['birth_notification_no'] is not None:
-            clean_record['birth_notification_no'] = str(clean_record['birth_notification_no']).strip()
-        
-        if clean_record.get('gender'):
-            gender = clean_record['gender'].upper()
-            if gender in ['M', 'MALE']:
-                clean_record['gender'] = 'Male'
-            elif gender in ['F', 'FEMALE']:
-                clean_record['gender'] = 'Female'
-            elif gender == 'OTHER':
-                clean_record['gender'] = 'Other'
             else:
-                logger.debug(f"Invalid gender value: {clean_record['gender']}")
-                clean_record['gender'] = None
+                logger.error(f"Invalid mode_of_delivery value: {clean_record['mode_of_delivery']}")
+                clean_record['mode_of_delivery'] = None
         
         return clean_record
         
@@ -345,12 +340,12 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
         return None
 
 def is_record_complete(record: Dict[str, Any]) -> bool:
-    required_fields = ['child_name', 'birth_notification_no', 'mother_name']
+    required_fields = ['ip_number', 'mother_name', 'birth_notification_no']
     
     for field in required_fields:
         value = record.get(field)
         if not value or (isinstance(value, str) and value.strip() == ''):
-            logger.debug(f"Record missing or invalid required field '{field}': {value}")
+            logger.error(f"Record missing or invalid required field '{field}': {value}")
             return False
     
     birth_no = record.get('birth_notification_no')
@@ -358,10 +353,10 @@ def is_record_complete(record: Dict[str, Any]) -> bool:
         try:
             birth_no_str = str(birth_no).strip()
             if len(birth_no_str) < 4:
-                logger.debug(f"Birth notification number too short: {birth_no_str}")
+                logger.error(f"Birth notification number too short: {birth_no_str}")
                 return False
         except:
-            logger.debug(f"Invalid birth notification number: {birth_no}")
+            logger.error(f"Invalid birth notification number: {birth_no}")
             return False
     
     mother_name = record.get('mother_name')
@@ -369,22 +364,22 @@ def is_record_complete(record: Dict[str, Any]) -> bool:
         try:
             mother_name_str = str(mother_name).strip()
             if len(mother_name_str) < 2:
-                logger.debug(f"Mother name too short: {mother_name_str}")
+                logger.error(f"Mother name too short: {mother_name_str}")
                 return False
         except:
-            logger.debug(f"Invalid mother name: {mother_name}")
+            logger.error(f"Invalid mother name: {mother_name}")
             return False
     
-    child_name = record.get('child_name')
-    if child_name:
+    ip_number = record.get('ip_number')
+    if ip_number:
         try:
-            child_name_str = str(child_name).strip()
-            if len(child_name_str) < 2:
-                logger.debug(f"Child name too short: {child_name_str}")
+            ip_number_str = str(ip_number).strip()
+            if len(ip_number_str) < 2:
+                logger.error(f"IP number too short: {ip_number_str}")
                 return False
         except:
-            logger.debug(f"Invalid child name: {child_name}")
+            logger.error(f"Invalid IP number: {ip_number}")
             return False
     
-    logger.debug(f"Record is complete: child_name={record.get('child_name')}, mother_name={record.get('mother_name')}, birth_notification_no={record.get('birth_notification_no')}")
+    logger.debug(f"Record is complete: ip_number={record.get('ip_number')}, mother_name={record.get('mother_name')}, birth_notification_no={record.get('birth_notification_no')}")
     return True
