@@ -18,7 +18,7 @@ def parse_excel_file(file_content: bytes) -> List[Dict[str, Any]]:
         xls = pd.ExcelFile(io.BytesIO(file_content))
         all_records = []
 
-        # Define expected column order and mapping
+        # Define expected column order
         EXPECTED_COLUMNS = [
             'record_date',
             'ip_number',
@@ -94,13 +94,18 @@ def parse_excel_file(file_content: bytes) -> List[Dict[str, Any]]:
                 for idx, row in df.iterrows():
                     try:
                         record = row.to_dict()
+                        logger.debug(f"Raw record at row {idx + 2}: {record}")
                         validated_record = validate_and_clean_record(record)
-                        if validated_record and is_record_complete(validated_record):
-                            sheet_records.append(validated_record)
+                        if validated_record:
+                            logger.debug(f"Validated record at row {idx + 2}: {validated_record}")
+                            if is_record_complete(validated_record):
+                                sheet_records.append(validated_record)
+                            else:
+                                logger.debug(f"Skipping incomplete record at row {idx + 2}: {validated_record}")
                         else:
-                            logger.debug(f"Skipping incomplete record at row {idx}: {record}")
+                            logger.debug(f"Skipping invalid record at row {idx + 2}: {record}")
                     except Exception as e:
-                        logger.error(f"Error processing row {idx}: {e}")
+                        logger.error(f"Error processing row {idx + 2}: {e}")
                         continue
 
                 all_records.extend(sheet_records)
@@ -215,6 +220,13 @@ def detect_and_parse_data(df_raw: pd.DataFrame) -> tuple[Optional[pd.DataFrame],
 def clean_and_standardize_dataframe(df: pd.DataFrame, parsing_method: str) -> Optional[pd.DataFrame]:
     """Clean and standardize the dataframe columns and data"""
     
+    # Define expected columns
+    EXPECTED_COLUMNS = [
+        'record_date', 'ip_number', 'mother_name', 'admission_date',
+        'discharge_date', 'date_of_birth', 'gender', 'mode_of_delivery',
+        'child_name', 'father_name', 'birth_notification_no'
+    ]
+    
     # Clean column names
     df.columns = df.columns.astype(str)
     df.columns = [col.strip().lower().replace(' ', '_').replace("'", "").replace('"', '') 
@@ -289,7 +301,7 @@ def clean_and_standardize_dataframe(df: pd.DataFrame, parsing_method: str) -> Op
     
     # Check if headers are not meaningful (e.g., datetime or numeric values)
     non_meaningful_headers = any(isinstance(col, (pd.Timestamp, datetime)) or str(col).startswith('Unnamed') 
-                                for col in df.columns)
+                                or str(col).isdigit() for col in df.columns)
     
     if missing_required or non_meaningful_headers:
         logger.info(f"Missing required fields: {missing_required} or non-meaningful headers detected")
@@ -341,13 +353,13 @@ def clean_and_standardize_dataframe(df: pd.DataFrame, parsing_method: str) -> Op
             # Identify name-like fields (mother_name, child_name, father_name)
             elif any(len(str(val).split()) >= 2 for val in sample_values):
                 if col != 'mother_name' and col != 'child_name' and col != 'father_name':
-                    # If mother_name and child_name are already mapped, assume this is father_name
-                    if 'mother_name' in df.columns and 'child_name' in df.columns and 'father_name' not in df.columns:
-                        df = df.rename(columns={col: 'father_name'})
-                    elif 'mother_name' not in df.columns:
+                    # Prioritize mother_name and child_name before father_name
+                    if 'mother_name' not in df.columns:
                         df = df.rename(columns={col: 'mother_name'})
                     elif 'child_name' not in df.columns:
                         df = df.rename(columns={col: 'child_name'})
+                    elif 'father_name' not in df.columns:
+                        df = df.rename(columns={col: 'father_name'})
                 
             # Identify birth notification number (numeric or long string)
             elif any(len(str(val)) >= 4 and str(val).isdigit() for val in sample_values):
@@ -385,7 +397,8 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                         clean_record[field] = pd.to_datetime(clean_record[field], dayfirst=True).date()
                     elif isinstance(clean_record[field], (pd.Timestamp, datetime)):
                         clean_record[field] = clean_record[field].date()
-                except:
+                except Exception as e:
+                    logger.debug(f"Failed to parse date for field {field}: {clean_record[field]}, error: {e}")
                     clean_record[field] = None
         
         # Process text fields
@@ -393,6 +406,9 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
         for field in text_fields:
             if field in clean_record and clean_record[field] is not None:
                 clean_record[field] = str(clean_record[field]).strip().title()
+                if field == 'father_name' and (clean_record[field].lower().startswith('unnamed') or len(clean_record[field]) < 2):
+                    clean_record[field] = None  # Handle invalid father_name
+                    logger.debug(f"Set father_name to None for invalid value: {clean_record[field]}")
         
         # Process ID fields
         if 'ip_number' in clean_record and clean_record['ip_number'] is not None:
@@ -410,6 +426,9 @@ def validate_and_clean_record(record: Dict[str, Any]) -> Optional[Dict[str, Any]
                 clean_record['gender'] = 'Female'
             elif gender == 'OTHER':
                 clean_record['gender'] = 'Other'
+            else:
+                logger.debug(f"Invalid gender value: {clean_record['gender']}")
+                clean_record['gender'] = None
         
         return clean_record
         
@@ -425,7 +444,7 @@ def is_record_complete(record: Dict[str, Any]) -> bool:
     for field in required_fields:
         value = record.get(field)
         if not value or (isinstance(value, str) and value.strip() == ''):
-            logger.debug(f"Record missing required field '{field}': {record}")
+            logger.debug(f"Record missing or invalid required field '{field}': {value}")
             return False
     
     # Additional validation - make sure birth_notification_no is valid
